@@ -1,0 +1,18 @@
+{
+  "hero": {
+    "title": "Your Health, Our Priority",
+    "subtitle": "Access healthcare services 24/7 with our comprehensive platform",
+    "cta": "Get Started",
+    "emergencyButton": "Emergency"
+  },
+  "stats": {
+    "hospitals": "Hospitals",
+    "doctors": "Doctors",
+    "patients": "Patients Served",
+    "satisfaction": "Satisfaction Rate"
+  },
+  "testimonials": {
+    "title": "What Our Patients Say",
+    "subtitle": "Real stories from people who trust our healthcare platform"
+  }
+}

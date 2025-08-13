@@ -1,0 +1,64 @@
+{
+  "features": {
+    "hospitalFinder": {
+      "title": "Find Hospitals",
+      "description": "Locate nearby hospitals with real-time availability and directions"
+    },
+    "ambulanceBooking": {
+      "title": "Book Ambulance",
+      "description": "Emergency ambulance booking with GPS tracking and ETA updates"
+    },
+    "appointments": {
+      "title": "Schedule Appointment",
+      "description": "Book appointments with doctors and specialists online"
+    },
+    "aiAssistant": {
+      "title": "AI Health Assistant",
+      "description": "Get instant medical advice and symptom analysis"
+    }
+  },
+  "quickActions": {
+    "title": "Quick Healthcare Actions",
+    "subtitle": "Access essential medical services instantly"
+  },
+  "emergency": {
+    "numbers": {
+      "title": "Emergency Numbers",
+      "subtitle": "Quick access to emergency services"
+    }
+  },
+  "location": {
+    "prompt": {
+      "title": "Enable Location Services",
+      "description": "Allow location access to find nearby hospitals and emergency services",
+      "button": "Enable Location"
+    }
+  },
+  "navigation": {
+    "home": "Home",
+    "hospitals": "Hospitals",
+    "ambulance": "Ambulance",
+    "appointments": "Appointments",
+    "profile": "Profile",
+    "about": "About",
+    "contact": "Contact"
+  },
+  "buttons": {
+    "emergency": "Emergency",
+    "findHospitals": "Find Hospitals",
+    "bookAmbulance": "Book Ambulance",
+    "scheduleAppointment": "Schedule Appointment",
+    "chat": "Chat",
+    "submit": "Submit",
+    "cancel": "Cancel",
+    "save": "Save",
+    "loading": "Loading..."
+  },
+  "status": {
+    "open": "Open",
+    "closed": "Closed",
+    "busy": "Busy",
+    "available": "Available",
+    "unavailable": "Unavailable"
+  }
+}
