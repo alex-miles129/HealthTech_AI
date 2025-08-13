@@ -207,6 +207,7 @@ export default function Home() {
 
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
+  const [errorState, setErrorState] = useState(null);
 
   // File upload handlers
   const handleFileUpload = (event) => {
@@ -263,6 +264,7 @@ export default function Home() {
 
     setAnalysisLoading(true);
     setAnalysisResult(null);
+    setErrorState(null);
 
     try {
       // Create FormData for file upload
@@ -310,11 +312,43 @@ export default function Home() {
             
         alert(`AI Analysis Complete! \n\nFiles uploaded: ${uploadedFiles.length}${locationInfo}\nPlease check the hospital recommendations below.`);
       } else {
+        // Handle specific API errors
+        if (response.status === 503) {
+          setErrorState({
+            type: 'service_unavailable',
+            title: 'AI Service Temporarily Unavailable',
+            message: result.message || 'The AI service is experiencing high demand. Please try again in a few minutes.',
+            retryable: true
+          });
+        } else if (response.status === 429) {
+          setErrorState({
+            type: 'rate_limited',
+            title: 'Too Many Requests',
+            message: result.message || 'You have made too many requests. Please wait a moment before trying again.',
+            retryable: true
+          });
+        } else {
+          setErrorState({
+            type: 'general_error',
+            title: 'Analysis Failed',
+            message: result.error || result.details || 'An unexpected error occurred during analysis.',
+            retryable: true
+          });
+        }
         throw new Error(result.error || 'Analysis failed');
       }
     } catch (error) {
       console.error('Error during analysis:', error);
-      alert('Sorry, there was an error analyzing your medical data. Please try again.');
+      
+      // Only show generic alert if we don't have a specific error state
+      if (!errorState) {
+        setErrorState({
+          type: 'network_error',
+          title: 'Connection Error',
+          message: 'Unable to connect to the analysis service. Please check your internet connection and try again.',
+          retryable: true
+        });
+      }
     } finally {
       setAnalysisLoading(false);
     }
@@ -394,10 +428,6 @@ export default function Home() {
                 </div>
               ) : null}
             </div>
-            
-            <button className="bg-gradient-to-r from-blue-500 to-purple-600 text-white px-6 py-2 rounded-full hover:shadow-lg hover:scale-105 transition-all duration-300">
-              Get Started
-            </button>
           </div>
         </div>
       </nav>
@@ -739,6 +769,86 @@ export default function Home() {
                 </div>
               )}
               
+              {/* Error Display */}
+              {errorState && (
+                <div className={`p-6 rounded-2xl border-2 mb-6 ${
+                  errorState.type === 'service_unavailable' 
+                    ? 'bg-yellow-500/10 border-yellow-500/30' 
+                    : errorState.type === 'rate_limited'
+                    ? 'bg-orange-500/10 border-orange-500/30'
+                    : 'bg-red-500/10 border-red-500/30'
+                }`}>
+                  <div className="flex items-start space-x-4">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                      errorState.type === 'service_unavailable' 
+                        ? 'bg-yellow-500/20' 
+                        : errorState.type === 'rate_limited'
+                        ? 'bg-orange-500/20'
+                        : 'bg-red-500/20'
+                    }`}>
+                      {errorState.type === 'service_unavailable' ? (
+                        <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      ) : errorState.type === 'rate_limited' ? (
+                        <svg className="w-5 h-5 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.464 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                        </svg>
+                      )}
+                    </div>
+                    <div className="flex-1">
+                      <h4 className={`font-semibold mb-2 ${
+                        errorState.type === 'service_unavailable' 
+                          ? 'text-yellow-300' 
+                          : errorState.type === 'rate_limited'
+                          ? 'text-orange-300'
+                          : 'text-red-300'
+                      }`}>
+                        {errorState.title}
+                      </h4>
+                      <p className={`text-sm mb-4 ${
+                        errorState.type === 'service_unavailable' 
+                          ? 'text-yellow-200' 
+                          : errorState.type === 'rate_limited'
+                          ? 'text-orange-200'
+                          : 'text-red-200'
+                      }`}>
+                        {errorState.message}
+                      </p>
+                      {errorState.retryable && (
+                        <div className="flex space-x-3">
+                          <button
+                            type="button"
+                            onClick={() => setErrorState(null)}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
+                              errorState.type === 'service_unavailable' 
+                                ? 'bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30' 
+                                : errorState.type === 'rate_limited'
+                                ? 'bg-orange-500/20 text-orange-300 hover:bg-orange-500/30'
+                                : 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                            }`}
+                          >
+                            Dismiss
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={analysisLoading}
+                            onClick={() => setErrorState(null)}
+                            className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Try Again
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Submit Button */}
               <button
                 type="submit"

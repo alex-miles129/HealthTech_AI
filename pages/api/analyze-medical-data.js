@@ -29,6 +29,48 @@ const getMimeType = (filename) => {
   return mimeTypes[ext] || 'application/octet-stream';
 };
 
+// Helper function for exponential backoff retry
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Enhanced retry function with model fallback
+const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000, enableFallback = false) => {
+  let useProModel = false;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn(useProModel);
+    } catch (error) {
+      // Check if it's a 503 service unavailable error
+      if (error.status === 503 && attempt < maxRetries - 1) {
+        const delayTime = baseDelay * Math.pow(2, attempt);
+        
+        // Try fallback to Pro model after 2 failed attempts with Flash
+        if (enableFallback && attempt >= 1 && !useProModel) {
+          useProModel = true;
+          console.log(`Switching to Gemini Pro model due to Flash overload (attempt ${attempt + 1}/${maxRetries})`);
+        } else {
+          const modelName = useProModel ? 'Gemini Pro' : 'Gemini Flash';
+          console.log(`${modelName} API overloaded, retrying in ${delayTime}ms (attempt ${attempt + 1}/${maxRetries})`);
+        }
+        
+        await delay(delayTime);
+        continue;
+      }
+      
+      // Check for rate limiting (429) or other retryable errors
+      if ((error.status === 429 || error.status >= 500) && attempt < maxRetries - 1) {
+        const delayTime = baseDelay * Math.pow(2, attempt);
+        console.log(`API error (${error.status}), retrying in ${delayTime}ms (attempt ${attempt + 1}/${maxRetries})`);
+        await delay(delayTime);
+        continue;
+      }
+      
+      // If all retries failed or non-retryable error, throw the error
+      throw error;
+    }
+  }
+};
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -65,7 +107,14 @@ export default async function handler(req, res) {
 
     // Initialize Gemini AI with vision model for file analysis
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    
+    // Try primary model first, fallback to pro model if flash is overloaded
+    const getModel = (useProModel = false) => {
+      const modelName = useProModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+      return genAI.getGenerativeModel({ model: modelName });
+    };
+    
+    let model = getModel(false); // Start with flash model
 
     // Process uploaded files - Handle ALL types
     const uploadedFiles = Array.isArray(files.files) ? files.files : [files.files];
@@ -211,14 +260,20 @@ Begin your analysis now:`;
         }
       }));
       
-      // Combined analysis with images and text
-      result = await model.generateContent([
-        enhancedPrompt + analysisInstruction + "\n\n**ANALYZE THESE MEDICAL IMAGES AND TEXT:**",
-        ...imageParts
-      ]);
+    // Combined analysis with images and text
+      result = await retryWithBackoff(async (useProModel = false) => {
+        const currentModel = getModel(useProModel);
+        return await currentModel.generateContent([
+          enhancedPrompt + analysisInstruction + "\n\n**ANALYZE THESE MEDICAL IMAGES AND TEXT:**",
+          ...imageParts
+        ]);
+      }, 5, 2000, true); // 5 retries with 2-second base delay, enable fallback
     } else {
       // Text-only analysis
-      result = await model.generateContent(enhancedPrompt + analysisInstruction);
+      result = await retryWithBackoff(async (useProModel = false) => {
+        const currentModel = getModel(useProModel);
+        return await currentModel.generateContent(enhancedPrompt + analysisInstruction);
+      }, 5, 2000, true); // 5 retries with 2-second base delay, enable fallback
     }
 
     const response = await result.response;
@@ -246,6 +301,26 @@ Begin your analysis now:`;
     });
   } catch (error) {
     console.error('Error in analyze-medical-data:', error);
+    
+    // Provide more specific error message for API overload
+    if (error.status === 503) {
+      return res.status(503).json({
+        error: 'AI service temporarily unavailable',
+        message: 'Both Gemini Flash and Pro models are currently experiencing high demand. This is common during peak hours. Please try again in 2-3 minutes.',
+        details: error.message,
+        retryAfter: 120 // Suggest retry after 2 minutes
+      });
+    }
+    
+    // Handle rate limiting errors
+    if (error.status === 429) {
+      return res.status(429).json({
+        error: 'Too many requests',
+        message: 'Rate limit exceeded. Please try again in a few minutes.',
+        details: error.message
+      });
+    }
+    
     return res.status(500).json({ 
       error: 'Failed to analyze medical data',
       details: error.message 
