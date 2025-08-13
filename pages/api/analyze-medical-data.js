@@ -32,35 +32,49 @@ const getMimeType = (filename) => {
 // Helper function for exponential backoff retry
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Enhanced retry function with model fallback
+// Enhanced retry function with intelligent rate limit handling
 const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000, enableFallback = false) => {
-  let useProModel = false;
+  let useFlashModel = true; // Start with Flash model (better rate limits)
   
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      return await fn(useProModel);
+      return await fn(useFlashModel);
     } catch (error) {
-      // Check if it's a 503 service unavailable error
-      if (error.status === 503 && attempt < maxRetries - 1) {
-        const delayTime = baseDelay * Math.pow(2, attempt);
+      const delayTime = baseDelay * Math.pow(2, attempt);
+      
+      // Handle rate limiting (429) with longer delays
+      if (error.status === 429) {
+        // Extract retry delay from API response if available
+        const apiRetryDelay = error.errorDetails?.find(detail => 
+          detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo'
+        )?.retryDelay;
         
-        // Try fallback to Pro model after 2 failed attempts with Flash
-        if (enableFallback && attempt >= 1 && !useProModel) {
-          useProModel = true;
-          console.log(`Switching to Gemini Pro model due to Flash overload (attempt ${attempt + 1}/${maxRetries})`);
-        } else {
-          const modelName = useProModel ? 'Gemini Pro' : 'Gemini Flash';
-          console.log(`${modelName} API overloaded, retrying in ${delayTime}ms (attempt ${attempt + 1}/${maxRetries})`);
+        let retryDelay = delayTime;
+        if (apiRetryDelay) {
+          // Convert API retry delay (e.g., "31s") to milliseconds
+          const seconds = parseInt(apiRetryDelay.replace('s', ''));
+          retryDelay = Math.max(seconds * 1000, delayTime);
         }
         
+        if (attempt < maxRetries - 1) {
+          const modelName = useFlashModel ? 'Gemini Flash' : 'Gemini Pro';
+          console.log(`${modelName} rate limited (429), retrying in ${retryDelay}ms (attempt ${attempt + 1}/${maxRetries})`);
+          await delay(retryDelay);
+          continue;
+        }
+      }
+      
+      // Handle service unavailable (503)
+      if (error.status === 503 && attempt < maxRetries - 1) {
+        const modelName = useFlashModel ? 'Gemini Flash' : 'Gemini Pro';
+        console.log(`${modelName} service unavailable, retrying in ${delayTime}ms (attempt ${attempt + 1}/${maxRetries})`);
         await delay(delayTime);
         continue;
       }
       
-      // Check for rate limiting (429) or other retryable errors
-      if ((error.status === 429 || error.status >= 500) && attempt < maxRetries - 1) {
-        const delayTime = baseDelay * Math.pow(2, attempt);
-        console.log(`API error (${error.status}), retrying in ${delayTime}ms (attempt ${attempt + 1}/${maxRetries})`);
+      // Handle other retryable errors
+      if (error.status >= 500 && attempt < maxRetries - 1) {
+        console.log(`Server error (${error.status}), retrying in ${delayTime}ms (attempt ${attempt + 1}/${maxRetries})`);
         await delay(delayTime);
         continue;
       }
@@ -108,13 +122,13 @@ export default async function handler(req, res) {
     // Initialize Gemini AI with vision model for file analysis
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     
-    // Try primary model first, fallback to pro model if flash is overloaded
-    const getModel = (useProModel = false) => {
-      const modelName = useProModel ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+    // Use Flash as primary (better free tier limits), fallback to Pro if needed
+    const getModel = (useFlashModel = true) => {
+      const modelName = useFlashModel ? 'gemini-1.5-flash' : 'gemini-1.5-pro';
       return genAI.getGenerativeModel({ model: modelName });
     };
     
-    let model = getModel(false); // Start with flash model
+    let model = getModel(true); // Start with Flash model (better free tier rate limits)
 
     // Process uploaded files - Handle ALL types
     const uploadedFiles = Array.isArray(files.files) ? files.files : [files.files];
@@ -261,19 +275,19 @@ Begin your analysis now:`;
       }));
       
     // Combined analysis with images and text
-      result = await retryWithBackoff(async (useProModel = false) => {
-        const currentModel = getModel(useProModel);
+      result = await retryWithBackoff(async (useFlashModel = true) => {
+        const currentModel = getModel(useFlashModel);
         return await currentModel.generateContent([
           enhancedPrompt + analysisInstruction + "\n\n**ANALYZE THESE MEDICAL IMAGES AND TEXT:**",
           ...imageParts
         ]);
-      }, 5, 2000, true); // 5 retries with 2-second base delay, enable fallback
+      }, 3, 5000, false); // 3 retries with 5-second base delay for rate limits
     } else {
       // Text-only analysis
-      result = await retryWithBackoff(async (useProModel = false) => {
-        const currentModel = getModel(useProModel);
+      result = await retryWithBackoff(async (useFlashModel = true) => {
+        const currentModel = getModel(useFlashModel);
         return await currentModel.generateContent(enhancedPrompt + analysisInstruction);
-      }, 5, 2000, true); // 5 retries with 2-second base delay, enable fallback
+      }, 3, 5000, false); // 3 retries with 5-second base delay for rate limits
     }
 
     const response = await result.response;
@@ -306,18 +320,42 @@ Begin your analysis now:`;
     if (error.status === 503) {
       return res.status(503).json({
         error: 'AI service temporarily unavailable',
-        message: 'Both Gemini Flash and Pro models are currently experiencing high demand. This is common during peak hours. Please try again in 2-3 minutes.',
+        message: 'The Gemini API is currently experiencing high demand. Please try again in 1-2 minutes.',
         details: error.message,
-        retryAfter: 120 // Suggest retry after 2 minutes
+        retryAfter: 120
       });
     }
     
-    // Handle rate limiting errors
+    // Handle rate limiting errors with detailed information
     if (error.status === 429) {
+      // Extract quota information from error details
+      const quotaFailure = error.errorDetails?.find(detail => 
+        detail['@type'] === 'type.googleapis.com/google.rpc.QuotaFailure'
+      );
+      
+      const retryInfo = error.errorDetails?.find(detail => 
+        detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo'
+      );
+      
+      let retryAfter = 300; // Default 5 minutes
+      if (retryInfo?.retryDelay) {
+        const seconds = parseInt(retryInfo.retryDelay.replace('s', ''));
+        retryAfter = seconds;
+      }
+      
+      // Determine if it's a daily or per-minute limit
+      const isDaily = quotaFailure?.violations?.some(v => 
+        v.quotaId?.includes('PerDay') || v.quotaId?.includes('Daily')
+      );
+      
       return res.status(429).json({
-        error: 'Too many requests',
-        message: 'Rate limit exceeded. Please try again in a few minutes.',
-        details: error.message
+        error: 'Rate limit exceeded',
+        message: isDaily 
+          ? 'You have exceeded your daily quota. Please try again tomorrow or upgrade your plan for higher limits.'
+          : `Rate limit exceeded. Please wait ${Math.ceil(retryAfter / 60)} minutes before trying again.`,
+        details: 'Free tier has limited requests. Consider upgrading to a paid plan for higher limits.',
+        retryAfter: retryAfter,
+        upgradeInfo: 'Visit https://ai.google.dev/pricing to see paid tier options with higher rate limits.'
       });
     }
     

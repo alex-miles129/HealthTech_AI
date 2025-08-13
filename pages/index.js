@@ -318,14 +318,19 @@ export default function Home() {
             type: 'service_unavailable',
             title: 'AI Service Temporarily Unavailable',
             message: result.message || 'The AI service is experiencing high demand. Please try again in a few minutes.',
-            retryable: true
+            retryable: true,
+            retryAfter: result.retryAfter || 90,
+            details: 'Our system automatically tried the Gemini Flash model with intelligent retry logic.'
           });
         } else if (response.status === 429) {
           setErrorState({
             type: 'rate_limited',
-            title: 'Too Many Requests',
+            title: 'Rate Limit Exceeded',
             message: result.message || 'You have made too many requests. Please wait a moment before trying again.',
-            retryable: true
+            retryable: true,
+            retryAfter: result.retryAfter || 300,
+            details: result.details || 'Free tier has limited requests per minute and per day.',
+            upgradeInfo: result.upgradeInfo
           });
         } else {
           setErrorState({
@@ -810,7 +815,7 @@ export default function Home() {
                       }`}>
                         {errorState.title}
                       </h4>
-                      <p className={`text-sm mb-4 ${
+                      <p className={`text-sm mb-2 ${
                         errorState.type === 'service_unavailable' 
                           ? 'text-yellow-200' 
                           : errorState.type === 'rate_limited'
@@ -819,6 +824,37 @@ export default function Home() {
                       }`}>
                         {errorState.message}
                       </p>
+                      {errorState.details && (
+                        <p className={`text-xs mb-4 opacity-80 ${
+                          errorState.type === 'service_unavailable' 
+                            ? 'text-yellow-300' 
+                            : errorState.type === 'rate_limited'
+                            ? 'text-orange-300'
+                            : 'text-red-300'
+                        }`}>
+                          {errorState.details}
+                        </p>
+                      )}
+                      {errorState.retryAfter && (
+                        <div className={`text-xs mb-4 px-3 py-2 rounded-lg ${
+                          errorState.type === 'service_unavailable' 
+                            ? 'bg-yellow-500/10 text-yellow-300 border border-yellow-500/30' 
+                            : errorState.type === 'rate_limited'
+                            ? 'bg-orange-500/10 text-orange-300 border border-orange-500/30'
+                            : 'bg-blue-500/10 text-blue-300 border border-blue-500/30'
+                        }`}>
+                          💡 <strong>Tip:</strong> Try again in {Math.ceil(errorState.retryAfter / 60)} minutes for best results.
+                        </div>
+                      )}
+                      {errorState.upgradeInfo && (
+                        <div className="text-xs mb-4 px-3 py-2 rounded-lg bg-green-500/10 text-green-300 border border-green-500/30">
+                          🚀 <strong>Upgrade:</strong> Get higher rate limits with a paid plan.
+                          <br />
+                          <a href={errorState.upgradeInfo} target="_blank" rel="noopener noreferrer" className="underline hover:text-green-200">
+                            View pricing options →
+                          </a>
+                        </div>
+                      )}
                       {errorState.retryable && (
                         <div className="flex space-x-3">
                           <button
